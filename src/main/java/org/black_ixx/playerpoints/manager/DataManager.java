@@ -28,6 +28,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import org.black_ixx.playerpoints.storage.PostgresConnector;
+import org.black_ixx.playerpoints.storage.PgPointsRepository;
+import org.black_ixx.playerpoints.storage.PgPointsWallet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -64,6 +68,8 @@ public class DataManager extends AbstractDataManager implements Listener {
     private final Set<String> allAccountNames;
     private boolean isModernSqlite;
     private boolean logTransactions;
+    private PgPointsWallet pgWallet;
+    private ScheduledTask pgRefreshTask;
 
     public DataManager(RosePlugin rosePlugin) {
         super(rosePlugin);
@@ -77,7 +83,21 @@ public class DataManager extends AbstractDataManager implements Listener {
 
     @Override
     public void reload() {
-        super.reload();
+        if (SettingKey.POSTGRES_ENABLED.get()) {
+            if (SettingKey.LEGACY_DATABASE_MODE.get()) throw new IllegalArgumentException("PG does not support legacy-database-mode; migrate to normal schema first");
+            PostgresConnector connector = new PostgresConnector(SettingKey.POSTGRES_HOST.get(), SettingKey.POSTGRES_PORT.get(),
+                    SettingKey.POSTGRES_DATABASE.get(), SettingKey.POSTGRES_USER.get(), SettingKey.POSTGRES_PASSWORD.get(),
+                    SettingKey.POSTGRES_SSLMODE.get(), SettingKey.POSTGRES_POOL.get());
+            try {
+                PgPointsRepository repository = new PgPointsRepository(connector.source(), this.getTablePrefix(), SettingKey.STARTING_BALANCE.get(), SettingKey.LOG_TRANSACTIONS.get());
+                repository.initialize();
+                this.databaseConnector = connector;
+                this.pgWallet = new PgPointsWallet(repository);
+                this.rosePlugin.getLogger().info("Data handler connected using PostgreSQL; committed atomic wallet enabled.");
+            } catch (Exception e) { connector.closeConnection(); throw new IllegalStateException("PG initialization failed", e); }
+        } else {
+            super.reload();
+        }
 
         this.pointsCache = CacheBuilder.newBuilder()
                 .concurrencyLevel(2)
@@ -114,10 +134,17 @@ public class DataManager extends AbstractDataManager implements Listener {
         }
 
         this.logTransactions = SettingKey.LOG_TRANSACTIONS.get();
+        if (this.pgWallet != null) this.pgRefreshTask = this.rosePlugin.getScheduler().runTaskTimer(() -> {
+            for (Player p : Bukkit.getOnlinePlayers()) this.pgWallet.refresh(p.getUniqueId()).whenComplete((v,e) -> {
+                if (e != null) this.rosePlugin.getLogger().log(java.util.logging.Level.WARNING, "PG points refresh failed", e);
+            });
+        }, 20L, 20L);
     }
 
     @Override
     public void disable() {
+        if (this.pgRefreshTask != null) { this.pgRefreshTask.cancel(); this.pgRefreshTask = null; }
+        if (this.pgWallet != null) { this.pgWallet.close(); this.pgWallet = null; }
         if (this.updateTask != null) {
             this.updateTask.cancel();
             this.updateTask = null;
@@ -130,7 +157,7 @@ public class DataManager extends AbstractDataManager implements Listener {
 
         this.update();
 
-        this.pointsCache.invalidateAll();
+        if (this.pointsCache != null) this.pointsCache.invalidateAll();
         this.pendingTransactions.clear();
         this.pendingUsernameUpdates.clear();
         this.allAccountNames.clear();
@@ -195,6 +222,7 @@ public class DataManager extends AbstractDataManager implements Listener {
      * @return the effective points value
      */
     public int getEffectivePoints(UUID playerId) {
+        if (this.pgWallet != null) return this.pgWallet.balance(playerId);
         return this.pendingTransactions.balance(playerId, () -> {
             try { return this.pointsCache.get(playerId); }
             catch (ExecutionException error) { throw new IllegalStateException("Points read failed", error); }
@@ -202,6 +230,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     }
 
     public int getEffectivePoints(UUID playerId, int points) {
+        if (this.pgWallet != null) return points;
         return this.pendingTransactions.balance(playerId, () -> points);
     }
 
@@ -221,6 +250,7 @@ public class DataManager extends AbstractDataManager implements Listener {
      * @return the amount of points the Player has
      */
     private void refreshPointsNow(UUID id) {
+        if (this.pgWallet != null) { PgPointsWallet.await(this.pgWallet.refresh(id)); return; }
         long epoch = this.pendingTransactions.generation(id);
         int value = this.getPoints(id);
         this.pendingTransactions.publish(id, epoch, value, points -> this.pointsCache.put(id, points));
@@ -265,6 +295,7 @@ public class DataManager extends AbstractDataManager implements Listener {
         if (amount < 0)
             return false;
 
+        if (this.pgWallet != null) return PgPointsWallet.await(this.pgWallet.change(playerId, new PendingTransaction(UpdateType.SET, transactionType, sourceDescription, source, amount)));
         return this.pendingTransactions.add(playerId, new PendingTransaction(UpdateType.SET, transactionType, sourceDescription, source, amount), () -> 0);
     }
 
@@ -277,7 +308,25 @@ public class DataManager extends AbstractDataManager implements Listener {
      * @return true if the transaction was successful, false otherwise
      */
     public boolean offsetPoints(TransactionType transactionType, UUID playerId, String sourceDescription, UUID source, int amount) {
+        if (this.pgWallet != null) return PgPointsWallet.await(this.pgWallet.change(playerId, new PendingTransaction(UpdateType.OFFSET, transactionType, sourceDescription, source, amount)));
         return this.pendingTransactions.add(playerId, new PendingTransaction(UpdateType.OFFSET, transactionType, sourceDescription, source, amount), () -> this.getEffectivePoints(playerId));
+    }
+
+    public boolean postgresWalletEnabled() { return this.pgWallet != null; }
+
+    public CompletableFuture<Integer> readPointsAsync(UUID id) {
+        if (this.pgWallet == null) throw new IllegalStateException("PG wallet is disabled");
+        return this.pgWallet.refresh(id);
+    }
+
+    public CompletableFuture<Boolean> changePointsAsync(UUID id, PendingTransaction transaction) {
+        if (this.pgWallet == null) throw new IllegalStateException("PG wallet is disabled");
+        return this.pgWallet.change(id, transaction);
+    }
+
+    public CompletableFuture<Boolean> transferPointsAsync(UUID from, UUID to, PendingTransaction debit, PendingTransaction credit) {
+        if (this.pgWallet == null) throw new IllegalStateException("PG wallet is disabled");
+        return this.pgWallet.transfer(from, to, debit, credit);
     }
 
     private void updatePoints(Map<UUID, List<PendingTransaction>> transactionsMap) {
@@ -384,6 +433,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     }
 
     public void offsetAllPoints(int amount) {
+        if (this.pgWallet != null) { if (amount != 0) PgPointsWallet.await(this.pgWallet.offsetAll(amount)); return; }
         if (amount == 0)
             return;
 
@@ -500,6 +550,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     }
 
     public void deleteAccount(UUID accountID) {
+        if (this.pgWallet != null) throw new UnsupportedOperationException("PG account deletion requires offline maintenance to avoid concurrent recreation");
         this.pointsCache.invalidate(accountID);
         this.pendingTransactions.remove(accountID);
 
@@ -522,6 +573,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     }
 
     public void importData(Map<UUID, Integer> data, Map<UUID, String> cachedUsernames) {
+        if (this.pgWallet != null) throw new UnsupportedOperationException("PG bulk import requires an offline migration");
         this.pointsCache.invalidateAll();
         this.pendingTransactions.clear();
 
@@ -547,6 +599,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     }
 
     public boolean importLegacyTable(String tableName) {
+        if (this.pgWallet != null) throw new UnsupportedOperationException("PG legacy import requires an offline migration");
         this.pointsCache.invalidateAll();
         this.pendingTransactions.clear();
 
@@ -596,7 +649,9 @@ public class DataManager extends AbstractDataManager implements Listener {
         this.databaseConnector.connect(connection -> {
             String query;
             boolean isSqlite = this.databaseConnector instanceof SQLiteConnector;
-            if (isSqlite) {
+            if (this.databaseConnector instanceof PostgresConnector) {
+                query = "INSERT INTO " + this.getTablePrefix() + "username_cache (uuid, username) VALUES (?, ?) ON CONFLICT(uuid) DO UPDATE SET username = EXCLUDED.username";
+            } else if (isSqlite) {
                 query = "REPLACE INTO " + this.getTablePrefix() + "username_cache (uuid, username) VALUES (?, ?)";
             } else {
                 query = "INSERT INTO " + this.getTablePrefix() + "username_cache (uuid, username) VALUES (?, ?) ON DUPLICATE KEY UPDATE username = ?";
@@ -606,7 +661,7 @@ public class DataManager extends AbstractDataManager implements Listener {
                 for (Map.Entry<UUID, String> entry : cachedUsernames.entrySet()) {
                     statement.setString(1, entry.getKey().toString());
                     statement.setString(2, entry.getValue());
-                    if (!isSqlite)
+                    if (!isSqlite && !(this.databaseConnector instanceof PostgresConnector))
                         statement.setString(3, entry.getValue());
                     statement.addBatch();
                 }

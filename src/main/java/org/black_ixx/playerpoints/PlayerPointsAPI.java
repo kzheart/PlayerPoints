@@ -1,6 +1,10 @@
 package org.black_ixx.playerpoints;
 
 import java.util.Collection;
+import java.util.concurrent.CompletableFuture;
+import org.black_ixx.playerpoints.models.PendingTransaction;
+import org.black_ixx.playerpoints.models.UpdateType;
+import org.black_ixx.playerpoints.storage.PgPointsWallet;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -189,6 +193,7 @@ public class PlayerPointsAPI {
     public boolean pay(@NotNull UUID sourceId, @NotNull UUID targetId, int amount) {
         Objects.requireNonNull(sourceId);
         Objects.requireNonNull(targetId);
+        if (amount <= 0 || sourceId.equals(targetId)) return false;
 
         PlayerPointsChangeEvent takeEvent = new PlayerPointsChangeEvent(sourceId, -amount, TransactionType.PAY_SENDER);
         Bukkit.getPluginManager().callEvent(takeEvent);
@@ -196,6 +201,14 @@ public class PlayerPointsAPI {
             return false;
 
         DataManager dataManager = this.plugin.getManager(DataManager.class);
+        if (dataManager.postgresWalletEnabled()) {
+            PlayerPointsChangeEvent giveEvent = new PlayerPointsChangeEvent(targetId, amount, TransactionType.PAY_RECEIVER);
+            Bukkit.getPluginManager().callEvent(giveEvent);
+            if (giveEvent.isCancelled() || giveEvent.getChange() <= 0) return false;
+            return PgPointsWallet.await(dataManager.transferPointsAsync(sourceId, targetId,
+                    new PendingTransaction(UpdateType.OFFSET, TransactionType.PAY_SENDER, "Pay", targetId, takeEvent.getChange()),
+                    new PendingTransaction(UpdateType.OFFSET, TransactionType.PAY_RECEIVER, "Pay", sourceId, giveEvent.getChange())));
+        }
         if (!dataManager.offsetPoints(TransactionType.PAY_SENDER, sourceId, "Pay", targetId, takeEvent.getChange())) // Sender balance is not enough, cancel the payment
             return false;
 
@@ -268,6 +281,46 @@ public class PlayerPointsAPI {
             return false;
 
         return this.plugin.getManager(DataManager.class).setPoints(TransactionType.SET, playerId, "Reset", sourceId, 0);
+    }
+
+    /** True only when PG supports commit-before-success asynchronous operations. */
+    public boolean postgresWalletEnabled() { return this.plugin.getManager(DataManager.class).postgresWalletEnabled(); }
+
+    /** Committed PG read; safe to call without Bukkit event dispatch. Display look() can be cached. */
+    public CompletableFuture<Integer> lookAsync(UUID playerId) {
+        Objects.requireNonNull(playerId);
+        return this.plugin.getManager(DataManager.class).readPointsAsync(playerId);
+    }
+
+    /** Invoke on the main thread. Both events precede the atomic two-account PG transaction. */
+    public CompletableFuture<Boolean> payAsync(UUID sourceId, UUID targetId, int amount) {
+        if (!Bukkit.isPrimaryThread()) throw new IllegalStateException("Points events require the main thread");
+        Objects.requireNonNull(sourceId); Objects.requireNonNull(targetId);
+        DataManager manager = this.plugin.getManager(DataManager.class);
+        if (!manager.postgresWalletEnabled()) throw new IllegalStateException("PG wallet disabled");
+        if (sourceId.equals(targetId) || amount <= 0) return CompletableFuture.completedFuture(false);
+        PlayerPointsChangeEvent debit = new PlayerPointsChangeEvent(sourceId, -amount, TransactionType.PAY_SENDER);
+        PlayerPointsChangeEvent credit = new PlayerPointsChangeEvent(targetId, amount, TransactionType.PAY_RECEIVER);
+        Bukkit.getPluginManager().callEvent(debit); Bukkit.getPluginManager().callEvent(credit);
+        if (debit.isCancelled() || credit.isCancelled() || debit.getChange() >= 0 || credit.getChange() <= 0) return CompletableFuture.completedFuture(false);
+        return manager.transferPointsAsync(sourceId, targetId,
+                new PendingTransaction(UpdateType.OFFSET, TransactionType.PAY_SENDER, "Pay", targetId, debit.getChange()),
+                new PendingTransaction(UpdateType.OFFSET, TransactionType.PAY_RECEIVER, "Pay", sourceId, credit.getChange()));
+    }
+
+    /** Invoke on Bukkit main thread: events run here; only JDBC runs on the owned PG worker. */
+    public CompletableFuture<Boolean> changePointsAsync(UUID playerId, int amount, boolean add) {
+        if (!Bukkit.isPrimaryThread()) throw new IllegalStateException("Points events require the main thread");
+        Objects.requireNonNull(playerId);
+        if (amount < 0) throw new IllegalArgumentException("amount must be nonnegative");
+        DataManager manager = this.plugin.getManager(DataManager.class);
+        if (!manager.postgresWalletEnabled()) throw new IllegalStateException("PG wallet disabled");
+        PlayerPointsChangeEvent event = new PlayerPointsChangeEvent(playerId, add ? amount : -amount, TransactionType.OFFSET);
+        Bukkit.getPluginManager().callEvent(event);
+        if (event.isCancelled()) return CompletableFuture.completedFuture(false);
+        // Purchase API promises the exact debit/refund; reject event rewrites instead of silently charging a different price.
+        if (event.getChange() != (add ? amount : -amount)) return CompletableFuture.completedFuture(false);
+        return manager.changePointsAsync(playerId, new PendingTransaction(UpdateType.OFFSET, TransactionType.OFFSET, add ? "Give" : "Take", null, event.getChange()));
     }
 
     /**

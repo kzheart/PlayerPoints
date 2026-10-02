@@ -39,6 +39,15 @@ public class SettingKey implements SettingHolder {
     public static final RoseSetting<Boolean> LEGACY_DATABASE_MODE = create("legacy-database-mode.enabled", BOOLEAN, false, "Should we use legacy database mode?");
     public static final RoseSetting<String> LEGACY_DATABASE_NAME = create("legacy-database-mode.table-name", STRING, "playerpoints", "The name of the legacy database table");
 
+    public static final RoseSetting<Boolean> POSTGRES_ENABLED = create("postgresql-settings.enabled", BOOLEAN, false, "Enable PostgreSQL; takes precedence over mysql-settings. Restart after changes.");
+    public static final RoseSetting<String> POSTGRES_HOST = create("postgresql-settings.hostname", STRING, "127.0.0.1", "PostgreSQL host");
+    public static final RoseSetting<Integer> POSTGRES_PORT = create("postgresql-settings.port", INTEGER, 5432, "PostgreSQL port");
+    public static final RoseSetting<String> POSTGRES_DATABASE = create("postgresql-settings.database-name", STRING, "playerpoints", "PostgreSQL database");
+    public static final RoseSetting<String> POSTGRES_USER = create("postgresql-settings.user-name", STRING, "playerpoints", "PostgreSQL user");
+    public static final RoseSetting<String> POSTGRES_PASSWORD = create("postgresql-settings.user-password", STRING, "", "PostgreSQL password");
+    public static final RoseSetting<String> POSTGRES_SSLMODE = create("postgresql-settings.sslmode", STRING, "verify-full", "disable/allow/prefer/require/verify-ca/verify-full");
+    public static final RoseSetting<Integer> POSTGRES_POOL = create("postgresql-settings.connection-pool-size", INTEGER, 3, "PostgreSQL pool size, 1-32");
+
     private static <T> RoseSetting<T> create(String key, SettingSerializer<T> serializer, T defaultValue, String... comments) {
         RoseSetting<T> setting = RoseSetting.ofBackedValue(key, PlayerPoints.getInstance(), serializer, defaultValue, comments);
         KEYS.add(setting);
