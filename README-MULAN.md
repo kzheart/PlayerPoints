@@ -57,7 +57,7 @@ export PLAYERPOINTS_TEST_PG_PASSWORD='...'
 bash ./gradlew test --rerun-tasks
 ```
 
-只使用隔离测试库，测试创建和删除专用前缀表。木兰隔离 PG 库已运行 18 项实库测试及 4 项队列测试，无跳过。历史两个 Minecraft 子服的并发与商城验收见 [PG 验收报告](docs/pg-validation-20261002.md)。新版同步设计见 [同步重设计](docs/pg-sync-redesign-20261002.md)。
+只使用隔离测试库，测试创建和删除专用前缀表。木兰隔离 PG 库已运行 18 项实库测试及 4 项队列测试，无跳过。历史两个 Minecraft 子服的并发与商城验收见 [PG 验收报告](docs/pg-validation-20261002.md)。新版同步设计见 [同步重设计](docs/pg-sync-redesign-20261002.md)。 两版实际 JAR 的 12 轮 PG 钱包 A/B 数据见 [性能对比](docs/pg-sync-performance-20261002.md)。
 
 ## 同步诊断与数据库迁移
 

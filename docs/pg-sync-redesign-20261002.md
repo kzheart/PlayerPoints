@@ -50,4 +50,6 @@ schema 1 → 2 在事务及初始化锁内增加版本递增、提交后通知�
 
 ## 官方机制参考
 
+后续已完成独立的前后 A/B 钱包基准，12 轮共 46,008 笔更新，对比数据和测试边界见[性能报告](pg-sync-performance-20261002.md)。该基准没有部署新版或启动真实游戏客户端，不替代本报告列出的游戏内验收。
+
 [PG NOTIFY](https://www.postgresql.org/docs/current/sql-notify.html) 说明事务提交后才发布通知、相同事务重复有效载荷折叠及队列满可能拒绝提交；[PG LISTEN](https://www.postgresql.org/docs/current/sql-listen.html) 说明先订阅后校准的顺序；[pgJDBC PGConnection](https://jdbc.postgresql.org/documentation/publicapi/org/postgresql/PGConnection.html) 说明独占连接上带超时的通知等待。

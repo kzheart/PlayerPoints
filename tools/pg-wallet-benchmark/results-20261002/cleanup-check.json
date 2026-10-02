@@ -1,0 +1,16 @@
+{
+  "testDatabaseRemoved": true,
+  "testRoleRemoved": true,
+  "liveSchema": 1,
+  "liveNodes": {
+    "spawn": {
+      "jarSha256": "c5eb928e3be1e20d6c05220f265520fa922a08d8fb7644e4757340383a515bf4"
+    },
+    "lobby": {
+      "jarSha256": "c5eb928e3be1e20d6c05220f265520fa922a08d8fb7644e4757340383a515bf4"
+    }
+  },
+  "noBenchmarkProcesses": true,
+  "liveUnchanged": true,
+  "passed": true
+}

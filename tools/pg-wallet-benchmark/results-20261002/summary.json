@@ -1,0 +1,306 @@
+{
+  "passed": true,
+  "runs": 12,
+  "transactions": 46008,
+  "balanceMismatches": 0,
+  "versions": {
+    "idle": {
+      "mulan.2": {
+        "displaySql": {
+          "min": 132000,
+          "median": 132000.0,
+          "max": 132000
+        },
+        "maintenanceSqlIncludingHeartbeats": {
+          "min": 132000,
+          "median": 132000.0,
+          "max": 132000
+        },
+        "jvmCpuSeconds": {
+          "min": 3.87,
+          "median": 3.89,
+          "max": 3.91
+        },
+        "secondsIncludingDrain": {
+          "min": 65.065123,
+          "median": 65.07091750000001,
+          "max": 65.076712
+        },
+        "accepted": {
+          "min": 0,
+          "median": 0.0,
+          "max": 0
+        },
+        "maxOutstandingTransactions": {
+          "min": 0,
+          "median": 0.0,
+          "max": 0
+        },
+        "maxPhysicalConnections": {
+          "min": 4,
+          "median": 4.0,
+          "max": 4
+        },
+        "sqlHeartbeats": {
+          "min": 0,
+          "median": 0.0,
+          "max": 0
+        }
+      },
+      "mulan.3": {
+        "displaySql": {
+          "min": 8,
+          "median": 8.0,
+          "max": 8
+        },
+        "maintenanceSqlIncludingHeartbeats": {
+          "min": 12,
+          "median": 12.0,
+          "max": 12
+        },
+        "jvmCpuSeconds": {
+          "min": 0.69,
+          "median": 0.76,
+          "max": 0.83
+        },
+        "secondsIncludingDrain": {
+          "min": 65.006163,
+          "median": 65.00628449999999,
+          "max": 65.006406
+        },
+        "accepted": {
+          "min": 0,
+          "median": 0.0,
+          "max": 0
+        },
+        "maxOutstandingTransactions": {
+          "min": 0,
+          "median": 0.0,
+          "max": 0
+        },
+        "maxPhysicalConnections": {
+          "min": 6,
+          "median": 6.5,
+          "max": 7
+        },
+        "sqlHeartbeats": {
+          "min": 4,
+          "median": 4.0,
+          "max": 4
+        }
+      },
+      "displaySqlReductionPercent": 99.99393939393939,
+      "maintenanceSqlReductionPercent": 99.99090909090908
+    },
+    "mixed": {
+      "mulan.2": {
+        "displaySql": {
+          "min": 134000,
+          "median": 134000.0,
+          "max": 134000
+        },
+        "maintenanceSqlIncludingHeartbeats": {
+          "min": 134000,
+          "median": 134000.0,
+          "max": 134000
+        },
+        "jvmCpuSeconds": {
+          "min": 5.6,
+          "median": 5.609999999999999,
+          "max": 5.62
+        },
+        "secondsIncludingDrain": {
+          "min": 66.100102,
+          "median": 66.104298,
+          "max": 66.108494
+        },
+        "accepted": {
+          "min": 6502,
+          "median": 6502.0,
+          "max": 6502
+        },
+        "maxOutstandingTransactions": {
+          "min": 8,
+          "median": 9.0,
+          "max": 10
+        },
+        "maxPhysicalConnections": {
+          "min": 4,
+          "median": 4.0,
+          "max": 4
+        },
+        "sqlHeartbeats": {
+          "min": 0,
+          "median": 0.0,
+          "max": 0
+        },
+        "transactionP95Ms": {
+          "min": 24.689699,
+          "median": 26.738518499999998,
+          "max": 28.787338
+        },
+        "visibilityP95Ms": {
+          "min": 957.894073,
+          "median": 958.211988,
+          "max": 958.529903
+        }
+      },
+      "mulan.3": {
+        "displaySql": {
+          "min": 1309,
+          "median": 1309.5,
+          "max": 1310
+        },
+        "maintenanceSqlIncludingHeartbeats": {
+          "min": 1313,
+          "median": 1313.5,
+          "max": 1314
+        },
+        "jvmCpuSeconds": {
+          "min": 4.32,
+          "median": 4.365,
+          "max": 4.41
+        },
+        "secondsIncludingDrain": {
+          "min": 65.087682,
+          "median": 65.096919,
+          "max": 65.106156
+        },
+        "accepted": {
+          "min": 6502,
+          "median": 6502.0,
+          "max": 6502
+        },
+        "maxOutstandingTransactions": {
+          "min": 2,
+          "median": 2.0,
+          "max": 2
+        },
+        "maxPhysicalConnections": {
+          "min": 6,
+          "median": 6.5,
+          "max": 7
+        },
+        "sqlHeartbeats": {
+          "min": 4,
+          "median": 4.0,
+          "max": 4
+        },
+        "transactionP95Ms": {
+          "min": 2.32137,
+          "median": 2.3275949999999996,
+          "max": 2.33382
+        },
+        "visibilityP95Ms": {
+          "min": 98.313254,
+          "median": 98.353244,
+          "max": 98.393234
+        }
+      },
+      "displaySqlReductionPercent": 99.02276119402985,
+      "maintenanceSqlReductionPercent": 99.01977611940298,
+      "transactionP95ReductionPercent": 91.29497395302586,
+      "visibilityP95ReductionPercent": 89.73575312856553
+    },
+    "burst": {
+      "mulan.2": {
+        "displaySql": {
+          "min": 10000,
+          "median": 10000.0,
+          "max": 10000
+        },
+        "maintenanceSqlIncludingHeartbeats": {
+          "min": 10000,
+          "median": 10000.0,
+          "max": 10000
+        },
+        "jvmCpuSeconds": {
+          "min": 2.11,
+          "median": 2.12,
+          "max": 2.13
+        },
+        "secondsIncludingDrain": {
+          "min": 7.345836,
+          "median": 7.374025,
+          "max": 7.402214
+        },
+        "accepted": {
+          "min": 5000,
+          "median": 5000.0,
+          "max": 5000
+        },
+        "maxOutstandingTransactions": {
+          "min": 1000,
+          "median": 1000.0,
+          "max": 1000
+        },
+        "maxPhysicalConnections": {
+          "min": 2,
+          "median": 2.5,
+          "max": 3
+        },
+        "sqlHeartbeats": {
+          "min": 0,
+          "median": 0.0,
+          "max": 0
+        },
+        "transactionP95Ms": {
+          "min": 920.123855,
+          "median": 926.3271745,
+          "max": 932.530494
+        }
+      },
+      "mulan.3": {
+        "displaySql": {
+          "min": 84,
+          "median": 86.0,
+          "max": 88
+        },
+        "maintenanceSqlIncludingHeartbeats": {
+          "min": 84,
+          "median": 86.0,
+          "max": 88
+        },
+        "jvmCpuSeconds": {
+          "min": 2.19,
+          "median": 2.2199999999999998,
+          "max": 2.25
+        },
+        "secondsIncludingDrain": {
+          "min": 7.051911,
+          "median": 7.055056,
+          "max": 7.058201
+        },
+        "accepted": {
+          "min": 5000,
+          "median": 5000.0,
+          "max": 5000
+        },
+        "maxOutstandingTransactions": {
+          "min": 1000,
+          "median": 1000.0,
+          "max": 1000
+        },
+        "maxPhysicalConnections": {
+          "min": 6,
+          "median": 6.5,
+          "max": 7
+        },
+        "sqlHeartbeats": {
+          "min": 0,
+          "median": 0.0,
+          "max": 0
+        },
+        "transactionP95Ms": {
+          "min": 861.720789,
+          "median": 862.022854,
+          "max": 862.324919
+        }
+      },
+      "displaySqlReductionPercent": 99.14,
+      "maintenanceSqlReductionPercent": 99.14,
+      "transactionP95ReductionPercent": 6.94185837036565
+    }
+  },
+  "scope": "actual wallet JARs, two wallet nodes in one standalone JVM; no Minecraft clients or TPS measurement"
+}

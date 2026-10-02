@@ -1,0 +1,15 @@
+{
+  "postgresql": "PostgreSQL 15.19 (Debian 15.19-0+deb12u1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+  "java": "openjdk version \"25.0.4.1\" 2026-08-18 LTS",
+  "accounts": 1000,
+  "simulatedWalletNodes": 2,
+  "poolPerNode": 3,
+  "intervalSeconds": 30,
+  "notificationWindowMs": 100,
+  "runtimeScope": "actual wallet JARs, two wallet nodes in one standalone JVM; no Minecraft clients or TPS measurement",
+  "jarSha256": {
+    "old": "c5eb928e3be1e20d6c05220f265520fa922a08d8fb7644e4757340383a515bf4",
+    "new": "9ca925ceecf91d53782036632f89052a45acaf74ed22e9c901eec88ffd3353f6"
+  },
+  "started": 1790952977
+}
