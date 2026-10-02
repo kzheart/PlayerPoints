@@ -36,7 +36,7 @@ public final class PgPointsRepository {
                 s.execute("INSERT INTO " + prefix + "pg_schema VALUES(1,0) ON CONFLICT(id) DO NOTHING");
                 try (ResultSet r = s.executeQuery("SELECT version FROM " + prefix + "pg_schema WHERE id=1 FOR UPDATE")) {
                     r.next(); int v = r.getInt(1);
-                    if (v > 1) throw new SQLException("Unsupported newer PlayerPoints PG schema");
+                    if (v > 2) throw new SQLException("Unsupported newer PlayerPoints PG schema");
                     if (v == 0) {
                         s.execute("CREATE TABLE IF NOT EXISTS " + prefix + "points (id BIGSERIAL PRIMARY KEY, uuid VARCHAR(36) UNIQUE NOT NULL, points INTEGER NOT NULL CHECK(points>=0), revision BIGINT NOT NULL DEFAULT 0)");
                         s.execute("CREATE TABLE IF NOT EXISTS " + prefix + "username_cache (uuid VARCHAR(36) PRIMARY KEY, username VARCHAR(30) NOT NULL)");
@@ -45,8 +45,24 @@ public final class PgPointsRepository {
                         s.execute("UPDATE " + prefix + "pg_schema SET version=1 WHERE id=1");
                     }
                 }
+                // Trigger covers all writers, including SQL maintenance tools. NOTIFY is delivered only after commit.
+                if (schemaVersion(c) < 2) {
+                    s.execute("CREATE OR REPLACE FUNCTION " + prefix + "bump_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.revision := GREATEST(NEW.revision, OLD.revision + 1); RETURN NEW; END $$");
+                    s.execute("CREATE TRIGGER points_revision BEFORE UPDATE ON " + prefix + "points FOR EACH ROW EXECUTE FUNCTION " + prefix + "bump_revision()");
+                    s.execute("CREATE OR REPLACE FUNCTION " + prefix + "notify_points() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_notify('" + notificationChannel() + "', NEW.uuid || ':' || NEW.revision::text); RETURN NEW; END $$");
+                    s.execute("CREATE TRIGGER points_notify AFTER INSERT OR UPDATE ON " + prefix + "points FOR EACH ROW EXECUTE FUNCTION " + prefix + "notify_points()");
+                    s.execute("UPDATE " + prefix + "pg_schema SET version=2 WHERE id=1");
+                }
                 c.commit();
             } catch (SQLException | RuntimeException e) { c.rollback(); throw e; }
+        }
+    }
+
+    public String notificationChannel() { return prefix + "changed"; }
+
+    private int schemaVersion(Connection c) throws SQLException {
+        try (Statement s = c.createStatement(); ResultSet r = s.executeQuery("SELECT version FROM " + prefix + "pg_schema WHERE id=1")) {
+            r.next(); return r.getInt(1);
         }
     }
 
@@ -65,8 +81,33 @@ public final class PgPointsRepository {
         }
     }
     public Balance read(UUID id) throws SQLException {
-        try (Connection c=source.getConnection()) { ensure(c,id); return read(c,id,false); }
+        try (Connection c=source.getConnection()) {
+            // Existing accounts require one SELECT, not an INSERT on every display read.
+            Map<UUID, Balance> existing = readMany(c, Collections.singleton(id));
+            if (existing.containsKey(id)) return existing.get(id);
+            ensure(c,id); return read(c,id,false);
+        }
     }
+    /** Read-only cache reconciliation. Never creates an account or overwrites a balance. */
+    public Map<UUID, Balance> readMany(Collection<UUID> ids) throws SQLException {
+        if (ids.isEmpty()) return Collections.emptyMap();
+        if (ids.size() > 256) throw new IllegalArgumentException("PG reconciliation batch exceeds 256 accounts");
+        try (Connection c = source.getConnection()) { return readMany(c, ids); }
+    }
+
+    private Map<UUID, Balance> readMany(Connection c, Collection<UUID> ids) throws SQLException {
+        String[] keys = ids.stream().map(UUID::toString).toArray(String[]::new);
+        Array array = c.createArrayOf("varchar", keys);
+        try (PreparedStatement s = c.prepareStatement("SELECT uuid,points,revision FROM " + prefix + "points WHERE uuid = ANY (?)")) {
+            s.setArray(1, array);
+            Map<UUID, Balance> result = new HashMap<>();
+            try (ResultSet r = s.executeQuery()) {
+                while (r.next()) result.put(UUID.fromString(r.getString(1)), new Balance(r.getInt(2), r.getLong(3)));
+            }
+            return result;
+        } finally { array.free(); }
+    }
+
     private Balance write(Connection c, UUID id, int value) throws SQLException {
         try (PreparedStatement s=c.prepareStatement("UPDATE " + prefix + "points SET points=?,revision=revision+1 WHERE uuid=? RETURNING points,revision")) {
             s.setInt(1,value); s.setString(2,id.toString());

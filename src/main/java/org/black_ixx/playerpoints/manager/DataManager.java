@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import java.util.logging.Level;
 import java.util.stream.Collectors;
 import org.black_ixx.playerpoints.config.SettingKey;
 import org.black_ixx.playerpoints.database.migrations._1_Create_Tables;
@@ -56,6 +57,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 
 public class DataManager extends AbstractDataManager implements Listener {
 
@@ -69,7 +71,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     private boolean isModernSqlite;
     private boolean logTransactions;
     private PgPointsWallet pgWallet;
-    private ScheduledTask pgRefreshTask;
+    private PgPointsSyncManager pgSync;
 
     public DataManager(RosePlugin rosePlugin) {
         super(rosePlugin);
@@ -92,9 +94,16 @@ public class DataManager extends AbstractDataManager implements Listener {
                 PgPointsRepository repository = new PgPointsRepository(connector.source(), this.getTablePrefix(), SettingKey.STARTING_BALANCE.get(), SettingKey.LOG_TRANSACTIONS.get());
                 repository.initialize();
                 this.databaseConnector = connector;
-                this.pgWallet = new PgPointsWallet(repository);
+                this.pgWallet = new PgPointsWallet(repository, e -> this.rosePlugin.getLogger().log(Level.WARNING, "PG points reconciliation failed", e));
+                this.pgSync = new PgPointsSyncManager(this.pgWallet, connector::openListener, repository.notificationChannel(),
+                        SettingKey.POSTGRES_SYNC_SECONDS.get(), e -> this.rosePlugin.getLogger().log(Level.WARNING, "PG points listener reconnecting", e));
+                for (Player p : Bukkit.getOnlinePlayers()) this.pgSync.join(p.getUniqueId());
                 this.rosePlugin.getLogger().info("Data handler connected using PostgreSQL; committed atomic wallet enabled.");
-            } catch (Exception e) { connector.closeConnection(); throw new IllegalStateException("PG initialization failed", e); }
+            } catch (Exception e) {
+                if (this.pgSync != null) { this.pgSync.close(); this.pgSync = null; }
+                if (this.pgWallet != null) { this.pgWallet.close(); this.pgWallet = null; }
+                connector.closeConnection(); throw new IllegalStateException("PG initialization failed", e);
+            }
         } else {
             super.reload();
         }
@@ -134,16 +143,11 @@ public class DataManager extends AbstractDataManager implements Listener {
         }
 
         this.logTransactions = SettingKey.LOG_TRANSACTIONS.get();
-        if (this.pgWallet != null) this.pgRefreshTask = this.rosePlugin.getScheduler().runTaskTimer(() -> {
-            for (Player p : Bukkit.getOnlinePlayers()) this.pgWallet.refresh(p.getUniqueId()).whenComplete((v,e) -> {
-                if (e != null) this.rosePlugin.getLogger().log(java.util.logging.Level.WARNING, "PG points refresh failed", e);
-            });
-        }, 20L, 20L);
     }
 
     @Override
     public void disable() {
-        if (this.pgRefreshTask != null) { this.pgRefreshTask.cancel(); this.pgRefreshTask = null; }
+        if (this.pgSync != null) { this.pgSync.close(); this.pgSync = null; }
         if (this.pgWallet != null) { this.pgWallet.close(); this.pgWallet = null; }
         if (this.updateTask != null) {
             this.updateTask.cancel();
@@ -213,6 +217,16 @@ public class DataManager extends AbstractDataManager implements Listener {
         Player player = event.getPlayer();
         this.pendingUsernameUpdates.put(player.getUniqueId(), player.getName());
         this.allAccountNames.add(player.getName());
+        if (this.pgSync != null) this.pgSync.join(player.getUniqueId());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        if (this.pgSync != null) this.pgSync.quit(event.getPlayer().getUniqueId());
+    }
+
+    public Map<String, Long> getPgSyncStatus() {
+        return this.pgSync == null ? Collections.emptyMap() : this.pgSync.diagnostics();
     }
 
     /**

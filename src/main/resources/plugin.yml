@@ -32,6 +32,7 @@ permissions:
       playerpoints.convert: true
       playerpoints.importlegacy: true
       playerpoints.version: true
+      playerpoints.syncstatus: true
   playerpoints.basecommand:
     description: Gives access to the base command
     default: true
@@ -82,4 +83,8 @@ permissions:
     default: op
   playerpoints.version:
     description: Gives access to the version command
+    default: op
+
+  playerpoints.syncstatus:
+    description: Shows PostgreSQL cache sync and queue diagnostics
     default: op

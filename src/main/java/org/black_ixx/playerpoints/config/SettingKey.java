@@ -46,7 +46,8 @@ public class SettingKey implements SettingHolder {
     public static final RoseSetting<String> POSTGRES_USER = create("postgresql-settings.user-name", STRING, "playerpoints", "PostgreSQL user");
     public static final RoseSetting<String> POSTGRES_PASSWORD = create("postgresql-settings.user-password", STRING, "", "PostgreSQL password");
     public static final RoseSetting<String> POSTGRES_SSLMODE = create("postgresql-settings.sslmode", STRING, "verify-full", "disable/allow/prefer/require/verify-ca/verify-full");
-    public static final RoseSetting<Integer> POSTGRES_POOL = create("postgresql-settings.connection-pool-size", INTEGER, 3, "PostgreSQL pool size, 1-32");
+    public static final RoseSetting<Integer> POSTGRES_SYNC_SECONDS = create("postgresql-settings.reconcile-interval-seconds", INTEGER, 30, "Batch reconciliation after missed notifications, 5-3600 seconds; restart required");
+    public static final RoseSetting<Integer> POSTGRES_POOL = create("postgresql-settings.connection-pool-size", INTEGER, 3, "PostgreSQL pool size, 2-32; display reads and writes have separate queues");
 
     private static <T> RoseSetting<T> create(String key, SettingSerializer<T> serializer, T defaultValue, String... comments) {
         RoseSetting<T> setting = RoseSetting.ofBackedValue(key, PlayerPoints.getInstance(), serializer, defaultValue, comments);

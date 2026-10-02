@@ -30,6 +30,7 @@ public class PgPointsRepositoryTest {
         if(ds==null)return;
         try(Connection c=ds.getConnection();Statement s=c.createStatement()){
             for(String name:Arrays.asList("points","username_cache","transaction_log","pg_schema"))s.execute("DROP TABLE IF EXISTS "+prefix+name+" CASCADE");
+            for(String name:Arrays.asList("bump_revision","notify_points"))s.execute("DROP FUNCTION IF EXISTS "+prefix+name+"() CASCADE");
         }
     }
     private PendingTransaction change(int amount){return new PendingTransaction(UpdateType.OFFSET,TransactionType.OFFSET,"Test",null,amount);}

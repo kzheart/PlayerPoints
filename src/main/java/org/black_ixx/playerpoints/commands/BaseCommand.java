@@ -72,6 +72,7 @@ public class BaseCommand extends PrimaryCommand {
                                 new ResetCommand(this.playerPoints),
                                 new SetCommand(this.playerPoints),
                                 new TakeCommand(this.playerPoints),
+                                new SyncStatusCommand(this.playerPoints),
                                 new VersionCommand(this.playerPoints)
                         ))
                 .build();
