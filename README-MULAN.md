@@ -51,7 +51,7 @@ PG 后端禁止在营业期间执行旧批量导入、legacy-table 导入、账�
 export PLAYERPOINTS_TEST_PG_URL='jdbc:postgresql://127.0.0.1:5432/playerpoints_test'
 export PLAYERPOINTS_TEST_PG_USER='playerpoints_test'
 export PLAYERPOINTS_TEST_PG_PASSWORD='...'
-./gradlew test --rerun-tasks
+bash ./gradlew test --rerun-tasks
 ```
 
 只使用隔离测试库，测试创建和删除专用前缀表。木兰已用真实 PG 运行 10 项用例，无跳过。实际两个 Minecraft 子服的并发与商城验收见 [PG 验收报告](docs/pg-validation-20261002.md)。
