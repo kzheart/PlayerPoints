@@ -21,7 +21,6 @@ import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -29,7 +28,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -43,6 +41,7 @@ import org.black_ixx.playerpoints.database.migrations._2_Add_Table_Username_Cach
 import org.black_ixx.playerpoints.database.migrations._3_Add_Table_Transaction_Log;
 import org.black_ixx.playerpoints.listeners.PointsMessageListener;
 import org.black_ixx.playerpoints.models.PendingTransaction;
+import org.black_ixx.playerpoints.models.PointWriteQueue;
 import org.black_ixx.playerpoints.models.SortedPlayer;
 import org.black_ixx.playerpoints.models.TransactionType;
 import org.black_ixx.playerpoints.models.UpdateType;
@@ -59,7 +58,8 @@ public class DataManager extends AbstractDataManager implements Listener {
     private ScheduledTask updateTask;
     private ScheduledTask accountUpdateTask;
     private LoadingCache<UUID, Integer> pointsCache;
-    private final Map<UUID, Deque<PendingTransaction>> pendingTransactions;
+    private final PointWriteQueue pendingTransactions;
+    private final Object writerLock = new Object();
     private final Map<UUID, String> pendingUsernameUpdates;
     private final Set<String> allAccountNames;
     private boolean isModernSqlite;
@@ -68,7 +68,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     public DataManager(RosePlugin rosePlugin) {
         super(rosePlugin);
 
-        this.pendingTransactions = new ConcurrentHashMap<>();
+        this.pendingTransactions = new PointWriteQueue();
         this.pendingUsernameUpdates = new ConcurrentHashMap<>();
         this.allAccountNames = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
@@ -142,21 +142,14 @@ public class DataManager extends AbstractDataManager implements Listener {
      * Pushes any pending points changes to the database
      */
     private void update() {
-        // Push any points changes to the database
-        Map<UUID, Deque<PendingTransaction>> processingPendingTransactions;
-        synchronized (this.pendingTransactions) {
-            if (this.pendingTransactions.isEmpty())
-                return;
-
-            processingPendingTransactions = new HashMap<>(this.pendingTransactions);
-            this.pendingTransactions.clear();
-        }
-
-        this.updatePoints(processingPendingTransactions);
-
-        if (!this.pendingUsernameUpdates.isEmpty()) {
-            this.updateCachedUsernames(this.pendingUsernameUpdates);
-            this.pendingUsernameUpdates.clear();
+        synchronized (this.writerLock) {
+            Map<UUID, List<PendingTransaction>> batch = this.pendingTransactions.drain();
+            if (!batch.isEmpty()) this.updatePoints(batch);
+            if (!this.pendingUsernameUpdates.isEmpty()) {
+                Map<UUID, String> users = new HashMap<>(this.pendingUsernameUpdates);
+                this.updateCachedUsernames(users);
+                users.forEach((id, name) -> this.pendingUsernameUpdates.remove(id, name));
+            }
         }
     }
 
@@ -185,7 +178,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerPreLogin(AsyncPlayerPreLoginEvent event) {
         if (event.getLoginResult() == AsyncPlayerPreLoginEvent.Result.ALLOWED)
-            this.pointsCache.put(event.getUniqueId(), this.getPoints(event.getUniqueId()));
+            this.refreshPointsNow(event.getUniqueId());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -202,43 +195,14 @@ public class DataManager extends AbstractDataManager implements Listener {
      * @return the effective points value
      */
     public int getEffectivePoints(UUID playerId) {
-        return this.getEffectivePoints(playerId, this.pendingTransactions.get(playerId), null);
+        return this.pendingTransactions.balance(playerId, () -> {
+            try { return this.pointsCache.get(playerId); }
+            catch (ExecutionException error) { throw new IllegalStateException("Points read failed", error); }
+        });
     }
 
     public int getEffectivePoints(UUID playerId, int points) {
-        return this.getEffectivePoints(playerId, this.pendingTransactions.get(playerId), points);
-    }
-
-    private int getEffectivePoints(UUID playerId, Deque<PendingTransaction> transactions, Integer points) {
-        // Get the cached amount or fetch it fresh from the database
-        if (points == null) {
-            try {
-                points = this.pointsCache.get(playerId);
-            } catch (ExecutionException e) {
-                e.printStackTrace();
-                points = 0;
-            }
-        }
-
-        // Apply any pending transactions
-        if (transactions != null) {
-            for (PendingTransaction transaction : transactions) {
-                switch (transaction.getUpdateType()) {
-                    case SET:
-                        points = transaction.getAmount();
-                        break;
-
-                    case OFFSET:
-                        points += transaction.getAmount();
-                        break;
-
-                    default:
-                        throw new IllegalStateException("Invalid transaction type");
-                }
-            }
-        }
-
-        return points;
+        return this.pendingTransactions.balance(playerId, () -> points);
     }
 
     /**
@@ -247,7 +211,7 @@ public class DataManager extends AbstractDataManager implements Listener {
      * @param uuid The player's UUID
      */
     public void refreshPoints(UUID uuid) {
-        this.rosePlugin.getScheduler().runTaskAsync(() -> this.pointsCache.put(uuid, this.getPoints(uuid)));
+        this.rosePlugin.getScheduler().runTaskAsync(() -> this.refreshPointsNow(uuid));
     }
 
     /**
@@ -256,6 +220,12 @@ public class DataManager extends AbstractDataManager implements Listener {
      * @param playerId The UUID of the Player
      * @return the amount of points the Player has
      */
+    private void refreshPointsNow(UUID id) {
+        long epoch = this.pendingTransactions.generation(id);
+        int value = this.getPoints(id);
+        this.pendingTransactions.publish(id, epoch, value, points -> this.pointsCache.put(id, points));
+    }
+
     private int getPoints(UUID playerId) {
         AtomicInteger value = new AtomicInteger();
         AtomicBoolean generate = new AtomicBoolean(false);
@@ -281,10 +251,6 @@ public class DataManager extends AbstractDataManager implements Listener {
         return value.get();
     }
 
-    private Deque<PendingTransaction> getPendingTransactions(UUID playerId) {
-        return this.pendingTransactions.computeIfAbsent(playerId, x -> new ConcurrentLinkedDeque<>());
-    }
-
     /**
      * Adds a pending transaction to set the player's points to a specified amount
      *
@@ -299,8 +265,7 @@ public class DataManager extends AbstractDataManager implements Listener {
         if (amount < 0)
             return false;
 
-        this.getPendingTransactions(playerId).add(new PendingTransaction(UpdateType.SET, transactionType, sourceDescription, source, amount));
-        return true;
+        return this.pendingTransactions.add(playerId, new PendingTransaction(UpdateType.SET, transactionType, sourceDescription, source, amount), () -> 0);
     }
 
     /**
@@ -312,98 +277,110 @@ public class DataManager extends AbstractDataManager implements Listener {
      * @return true if the transaction was successful, false otherwise
      */
     public boolean offsetPoints(TransactionType transactionType, UUID playerId, String sourceDescription, UUID source, int amount) {
-        int points = this.getEffectivePoints(playerId);
-        if (points + amount < 0)
-            return false;
-
-        this.getPendingTransactions(playerId).add(new PendingTransaction(UpdateType.OFFSET, transactionType, sourceDescription, source, amount));
-        return true;
+        return this.pendingTransactions.add(playerId, new PendingTransaction(UpdateType.OFFSET, transactionType, sourceDescription, source, amount), () -> this.getEffectivePoints(playerId));
     }
 
-    private void updatePoints(Map<UUID, Deque<PendingTransaction>> transactionsMap) {
+    private void updatePoints(Map<UUID, List<PendingTransaction>> transactionsMap) {
+        AtomicBoolean committed = new AtomicBoolean();
+        Map<UUID, Integer> balances = new HashMap<>();
         this.databaseConnector.connect(connection -> {
-            String offsetQuery = "INSERT INTO " + this.getPointsTableName() + " (" + this.getUuidColumnName() + ", points) VALUES (?, ?) ";
-            String setQuery = offsetQuery;
-            String getQuery = "SELECT points FROM " + this.getPointsTableName() + " WHERE " + this.getUuidColumnName() + " = ?";
-            boolean mysql = false;
-            if (this.databaseConnector instanceof SQLiteConnector) {
-                if (this.isModernSqlite) {
-                    offsetQuery += "ON CONFLICT(" + this.getUuidColumnName() + ") DO UPDATE SET points = MAX(0, points + ?)";
-                    setQuery += "ON CONFLICT(" + this.getUuidColumnName() + ") DO UPDATE SET points = ?";
-                } else {
-                    offsetQuery = "INSERT OR REPLACE INTO " + this.getPointsTableName() + " (" + this.getUuidColumnName() + ", points) " +
-                            "VALUES (?, COALESCE((SELECT MAX(0, points + ?) FROM " + this.getPointsTableName() + " WHERE " + this.getUuidColumnName() + " = ?), ?))";
-                    setQuery = "INSERT OR REPLACE INTO " + this.getPointsTableName() + " (" + this.getUuidColumnName() + ", points) VALUES (?, ?)";
-                }
-            } else {
-                offsetQuery += "ON DUPLICATE KEY UPDATE points = GREATEST(0, points + ?)";
-                setQuery += "ON DUPLICATE KEY UPDATE points = ?";
-                mysql = true;
-            }
-
-            for (Map.Entry<UUID, Deque<PendingTransaction>> entry : transactionsMap.entrySet()) {
-                UUID uuid = entry.getKey();
-                for (PendingTransaction transaction : entry.getValue()) {
-                    switch (transaction.getUpdateType()) {
-                        case OFFSET:
-                            try (PreparedStatement statement = connection.prepareStatement(offsetQuery)) {
-                                statement.setString(1, uuid.toString());
-                                statement.setInt(2, transaction.getAmount());
-                                if (mysql || this.isModernSqlite) {
-                                    statement.setInt(3, transaction.getAmount());
-                                } else {
-                                    statement.setString(3, uuid.toString());
-                                    statement.setInt(4, transaction.getAmount());
-                                }
-                                statement.executeUpdate();
-                            }
-                            break;
-
-                        case SET:
-                            try (PreparedStatement statement = connection.prepareStatement(setQuery)) {
-                                statement.setString(1, uuid.toString());
-                                statement.setInt(2, transaction.getAmount());
-                                if (mysql || this.isModernSqlite) {
-                                    statement.setInt(3, transaction.getAmount());
-                                }
-                                statement.executeUpdate();
-                            }
-                            break;
-
-                        default:
-                            throw new IllegalStateException("Invalid transaction type");
-                    }
-
-                    this.logTransaction(connection, uuid, transaction);
-                }
-
-                try (PreparedStatement statement = connection.prepareStatement(getQuery)) {
-                    statement.setString(1, uuid.toString());
-                    ResultSet result = statement.executeQuery();
-                    if (result.next()) {
-                        this.pointsCache.put(uuid, result.getInt(1));
+            boolean autoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                String offsetQuery = "INSERT INTO " + this.getPointsTableName() + " (" + this.getUuidColumnName() + ", points) VALUES (?, ?) ";
+                String setQuery = offsetQuery;
+                String getQuery = "SELECT points FROM " + this.getPointsTableName() + " WHERE " + this.getUuidColumnName() + " = ?";
+                boolean mysql = false;
+                if (this.databaseConnector instanceof SQLiteConnector) {
+                    if (this.isModernSqlite) {
+                        offsetQuery += "ON CONFLICT(" + this.getUuidColumnName() + ") DO UPDATE SET points = MAX(0, points + ?)";
+                        setQuery += "ON CONFLICT(" + this.getUuidColumnName() + ") DO UPDATE SET points = ?";
                     } else {
-                        this.pointsCache.invalidate(uuid);
+                        offsetQuery = "INSERT OR REPLACE INTO " + this.getPointsTableName() + " (" + this.getUuidColumnName() + ", points) " +
+                                "VALUES (?, COALESCE((SELECT MAX(0, points + ?) FROM " + this.getPointsTableName() + " WHERE " + this.getUuidColumnName() + " = ?), ?))";
+                        setQuery = "INSERT OR REPLACE INTO " + this.getPointsTableName() + " (" + this.getUuidColumnName() + ", points) VALUES (?, ?)";
                     }
+                } else {
+                    offsetQuery += "ON DUPLICATE KEY UPDATE points = GREATEST(0, points + ?)";
+                    setQuery += "ON DUPLICATE KEY UPDATE points = ?";
+                    mysql = true;
                 }
 
-                // Send update to BungeeCord if enabled
-                if (org.black_ixx.playerpoints.config.SettingKey.BUNGEECORD_SEND_UPDATES.get() && this.rosePlugin.isEnabled()) {
-                    ByteArrayDataOutput output = ByteStreams.newDataOutput();
-                    output.writeUTF("Forward");
-                    output.writeUTF("ONLINE");
-                    output.writeUTF(PointsMessageListener.REFRESH_SUBCHANNEL);
+                for (Map.Entry<UUID, List<PendingTransaction>> entry : transactionsMap.entrySet()) {
+                    UUID uuid = entry.getKey();
+                    for (PendingTransaction transaction : entry.getValue()) {
+                        switch (transaction.getUpdateType()) {
+                            case OFFSET:
+                                try (PreparedStatement statement = connection.prepareStatement(offsetQuery)) {
+                                    statement.setString(1, uuid.toString());
+                                    statement.setInt(2, transaction.getAmount());
+                                    if (mysql || this.isModernSqlite) {
+                                        statement.setInt(3, transaction.getAmount());
+                                    } else {
+                                        statement.setString(3, uuid.toString());
+                                        statement.setInt(4, transaction.getAmount());
+                                    }
+                                    statement.executeUpdate();
+                                }
+                                break;
 
-                    byte[] bytes = entry.getKey().toString().getBytes(StandardCharsets.UTF_8);
-                    output.writeShort(bytes.length);
-                    output.write(bytes);
+                            case SET:
+                                try (PreparedStatement statement = connection.prepareStatement(setQuery)) {
+                                    statement.setString(1, uuid.toString());
+                                    statement.setInt(2, transaction.getAmount());
+                                    if (mysql || this.isModernSqlite) {
+                                        statement.setInt(3, transaction.getAmount());
+                                    }
+                                    statement.executeUpdate();
+                                }
+                                break;
 
-                    Player attachedPlayer = Iterables.getFirst(Bukkit.getOnlinePlayers(), null);
-                    if (attachedPlayer != null)
-                        attachedPlayer.sendPluginMessage(this.rosePlugin, PointsMessageListener.CHANNEL, output.toByteArray());
+                            default:
+                                throw new IllegalStateException("Invalid transaction type");
+                        }
+
+                        this.logTransaction(connection, uuid, transaction);
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement(getQuery)) {
+                        statement.setString(1, uuid.toString());
+                        ResultSet result = statement.executeQuery();
+                        if (result.next()) {
+                            balances.put(uuid, result.getInt(1));
+                        } else {
+                            throw new SQLException("Missing points account after update: " + uuid);
+                        }
+                    }
+
+
                 }
-            }
+                connection.commit();
+                committed.set(true);
+            } catch (SQLException | RuntimeException error) {
+                connection.rollback();
+                throw error;
+            } finally { connection.setAutoCommit(autoCommit); }
         });
+        if (!committed.get()) {
+            this.pendingTransactions.failed();
+            throw new IllegalStateException("Points batch outcome requires reconciliation; no automatic replay");
+        }
+        balances.forEach((id, value) -> this.pendingTransactions.committed(id, value, points -> this.pointsCache.put(id, points)));
+        if (SettingKey.BUNGEECORD_SEND_UPDATES.get() && this.rosePlugin.isEnabled()) {
+            this.rosePlugin.getScheduler().runTask(() -> {
+                Player attached = Iterables.getFirst(Bukkit.getOnlinePlayers(), null);
+                if (attached == null) return;
+                for (UUID id : balances.keySet()) {
+                    ByteArrayDataOutput output = ByteStreams.newDataOutput();
+                    output.writeUTF("Forward"); output.writeUTF("ONLINE");
+                    output.writeUTF(PointsMessageListener.REFRESH_SUBCHANNEL);
+                    byte[] bytes = id.toString().getBytes(StandardCharsets.UTF_8);
+                    output.writeShort(bytes.length); output.write(bytes);
+                    attached.sendPluginMessage(this.rosePlugin, PointsMessageListener.CHANNEL, output.toByteArray());
+                }
+            });
+        }
+
     }
 
     public void offsetAllPoints(int amount) {

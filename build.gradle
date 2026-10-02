@@ -7,9 +7,10 @@ plugins {
 }
 
 group = 'org.black_ixx'
-version = '3.3.5'
+version = '3.3.5-mulan.1'
 
 java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
     sourceCompatibility = 1.8
     targetCompatibility = 1.8
     disableAutoTargetJvm()
@@ -17,6 +18,7 @@ java {
 
 repositories {
     mavenCentral()
+    maven { url = 'https://repo.papermc.io/repository/maven-public/' }
 
     maven { url = 'https://repo.rosewooddev.io/repository/public/' }
     maven { url = 'https://hub.spigotmc.org/nexus/content/repositories/snapshots/' }
@@ -32,7 +34,7 @@ repositories {
 dependencies {
     api 'dev.rosewood:rosegarden:1.5.7'
 
-    compileOnly 'org.spigotmc:spigot-api:26.2-R0.1-SNAPSHOT'
+    compileOnly 'io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT'
     compileOnly 'com.github.milkbowl:vault:1.7.3'
     compileOnly 'me.lokka30:treasury-api:1.2.1'
     compileOnly 'com.vexsoftware:votifier:2.7.2'
@@ -94,3 +96,7 @@ publishing {
 
 build.dependsOn shadowJar
 generateMetadataFileForShadowPublication.dependsOn jar
+
+dependencies { testImplementation 'junit:junit:4.13.2' }
+
+shadowJar { from('LICENSE') { into 'META-INF' } }
